@@ -46,7 +46,7 @@ Aplicación web para subir, organizar y previsualizar documentos con **PostgreSQ
 | Estilos | Tailwind CSS 4 | |
 | Iconos | `lucide-react` | |
 
-**Dependencias totales: 8.** No hay ORM, no hay cliente de Supabase y no hay
+**Dependencias totales: 7.** No hay ORM, no hay cliente de Supabase y no hay
 librería de autenticación.
 
 ---
@@ -68,11 +68,18 @@ Lo mínimo para arrancar en local:
 
 ```env
 DATABASE_URL=postgresql://postgres:TU_CLAVE@127.0.0.1:5432/gestor_archivos_pg
-PGSSLMODE=disable
 STORAGE_BACKEND=local
 JWT_SECRET=<genera uno con el comando que indica el archivo>
 NEXT_PUBLIC_AUTH_MODE=0
 ```
+
+**No hace falta `PGSSLMODE`.** La aplicación decide el TLS sola: si el host es
+`localhost` o `127.0.0.1` no lo pide, y con cualquier otro host lo usa. Antes
+había que cambiar esa variable a mano al alternar entre la base local y
+Supabase, y olvidarse producía un error engañoso —`The server does not support
+SSL connections`— que parece un problema de la base cuando era del modo de
+conexión. Si algún día necesitas forzarlo (un túnel, un servidor con su
+certificado), la variable sigue teniendo prioridad.
 
 Genera el secreto con:
 
@@ -173,10 +180,36 @@ verificado.
 3. Crea el bucket de archivos en **Storage → New bucket**:
    - Nombre: `archivos` (o el que pongas en `SUPABASE_STORAGE_BUCKET`)
    - **Private**. El control de acceso lo hacen las rutas de API, no el bucket.
-4. Apunta estas dos cosas:
-   - **Project Settings → Database → Connection string → URI** (pooler, puerto
-     6543)
+   - Opcional pero recomendado: en *Bucket settings*, pon un límite de tamaño y
+     restringe los tipos MIME a los que admite la aplicación. El bucket
+     rechaza la subida si el `Content-Type` no está en la lista, y la aplicación
+     manda ahí el tipo real del archivo.
+4. Apunta estas tres cosas:
+   - **Project Settings → Database → Connection string → URI**. Se llama
+     `session pooler` si el proyecto es antiguo o *Transaction* si es nuevo. Cópiala
+     **tal cual**: el prefijo del host y el puerto **no son los que se suppose
+     aquí**, cambian según el proyecto. Ver la nota de abajo.
+   - **Project Settings → Database → DB password**
    - **Project Settings → API → service_role** (pulsa *Reveal*)
+
+> **Sobre el pooler, que da muchos disgustos.** La cadena tiene esta forma:
+>
+> ```
+> postgresql://postgres.REF:TU_CONTRASEÑA@aws-1-REGION.pooler.supabase.com:PUERTO/postgres
+> ```
+>
+> Tres cosas que fallan a menudo:
+>
+> - **El prefijo `aws-1-` o `aws-0-`** depende del proyecto. No es fijo.
+> - **El usuario lleva el ref detrás**: `postgres.REF`, no `postgres` a secas.
+>   Con el usuario equivocado, el pooler responde
+>   `tenant/user postgres.REF not found`.
+> - **El puerto**: 5432 o 6543 según el modo. No asumas ninguno; usa el de la
+>   cadena que te da el panel.
+>
+> El fallo más difícil de leer es cuando el host no resuelve: parece que el
+> proyecto está caído, cuando lo que falla es el prefijo. Si la API de Supabase
+> responde y la base no, **mira el prefijo antes que nada**.
 
 ### Paso 2: Subir el código
 
@@ -193,9 +226,9 @@ git push -u origin main
 
    | Variable | Valor |
    |---|---|
-   | `DATABASE_URL` | La del pooler, con `?sslmode=require` |
+   | `DATABASE_URL` | La del pooler, **tal cual** (sin `?sslmode=require`, la app lo pone) |
    | `STORAGE_BACKEND` | `supabase` |
-   | `SUPABASE_SERVICE_ROLE_KEY` | La clave de servicio |
+   | `SUPABASE_SERVICE_ROLE_KEY` | La clave de servicio, **sin** prefijo `NEXT_PUBLIC_` |
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://TU-PROYECTO.supabase.co` |
    | `SUPABASE_STORAGE_BUCKET` | `archivos` |
    | `JWT_SECRET` | Uno nuevo, distinto del de la otra versión |
@@ -206,12 +239,34 @@ git push -u origin main
 
 4. **Deploy**.
 
+> **La clave de servicio nunca lleva `NEXT_PUBLIC_`.** Next.js sustituye las
+> variables `NEXT_PUBLIC_*` por su valor **en tiempo de compilación, dentro del
+> código del navegador**: cualquiera que abra la aplicación se la descarga. Con
+> esa clave se lee y escribe la base entera, sin RLS y sin contraseña.
+
+> **No declares la clave anónima.** No hace falta, y conviene saber por qué: esta
+> aplicación **no usa la autenticación de Supabase**. Las cuentas viven en la
+> tabla `users` de este proyecto, con la contraseña hasheada con bcrypt, y la
+> sesión es un JWT propio firmado con `JWT_SECRET`. Supabase Auth (GoTrue) no
+> interviene en nada. Por eso el correo de «restablece tu contraseña» de Supabase
+> **no sirve aquí**: iría a `auth.users`, una tabla que esta aplicación no
+> escribe ni lee. Quien se olvide de la contraseña necesita que un administrador
+> le establezca una nueva.
+
 ### ⚠️ Sobre el pooler de Supabase
 
-En Vercel usa la conexión del **pooler en modo transacción (puerto 6543)**, no
-la directa (5432). Las funciones serverless abren y cierran conexiones
-constantes y la conexión directa se agota enseguida, con errores de "too many
-clients". Es el fallo número uno al desplegar esto.
+En Vercel usa **la cadena que da el panel**, sin editarla. Este proyecto funciona
+con el host `aws-1-` y el puerto 5432, pero eso no es una regla: cada proyecto
+tiene el suyo y cambiarlo a mano es la causa más frecuente de que esto no
+arranque. La nota de arriba explica los tres sitios donde se suele fallar.
+
+Lo que sí es una regla: **no uses la conexión directa** si tu panel ofrece el
+pooler. Las funciones serverless abren y cierran conexiones constantemente y la
+conexión directa se agota enseguida, con errores de "too many clients".
+
+Por cierto, `JWT_SECRET` es obligatoria: si falta, **la compilación falla** a
+propósito, antes de que exista una URL pública. Prefiere eso a inventarse un
+secreto que permita falsificar sesiones.
 
 ### ⚠️ Sobre la clave de servicio
 
