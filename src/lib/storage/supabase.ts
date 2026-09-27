@@ -41,7 +41,11 @@ function codificarRuta(storagePath: string): string {
     .join("/");
 }
 
-export async function guardar(storagePath: string, datos: Buffer): Promise<void> {
+export async function guardar(
+  storagePath: string,
+  datos: Buffer,
+  mimeType: string
+): Promise<void> {
   const { base, clave, bucket } = configuracion();
 
   const respuesta = await fetch(
@@ -50,7 +54,10 @@ export async function guardar(storagePath: string, datos: Buffer): Promise<void>
       method: "POST",
       headers: {
         Authorization: `Bearer ${clave}`,
-        "Content-Type": "application/octet-stream",
+        // El tipo real del archivo, no un octet-stream genérico: si el bucket
+        // tiene `allowed_mime_types`, Supabase compara este valor y rechaza la
+        // subida cuando no coincide.
+        "Content-Type": mimeType || "application/octet-stream",
         // La versión hace que dos subidas al mismo path se sobrescriban en vez de
         // crear un duplicado, que es justo el comportamiento esperado.
         "x-upsert": "true",
@@ -95,23 +102,35 @@ export async function borrar(rutas: string[]): Promise<void> {
   if (rutas.length === 0) return;
   const { base, clave, bucket } = configuracion();
 
-  const respuesta = await fetch(
-    `${base}/storage/v1/object/${bucket}`,
-    {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${clave}`,
-        "Content-Type": "application/json",
-      },
-      // La API admite un objeto o un arreglo de rutas.
-      body: JSON.stringify(rutas.map(codificarRuta)),
-    }
-  );
+  // El cuerpo debe ser un objeto con la lista en `prefixes`. Un array suelto
+  // devuelve 400 con "body must be object" y, lo peor, lo hace sin borrar nada:
+  // el error se pierde y el binario se queda en el bucket para siempre.
+  const cuerpo = JSON.stringify({ prefixes: rutas.map(codificarRuta) });
+
+  const respuesta = await fetch(`${base}/storage/v1/object/${bucket}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${clave}`,
+      "Content-Type": "application/json",
+    },
+    body: cuerpo,
+  });
 
   if (!respuesta.ok && respuesta.status !== 404) {
     const detalle = await respuesta.text().catch(() => "");
     throw new Error(
       `Supabase Storage devolvió ${respuesta.status} al borrar. ${detalle}`.trim()
+    );
+  }
+
+  // Un 200 con cuerpo `[]` significa que no encontró esos objetos. Puede ser
+  // normal si ya estaban borrados, pero también puede esconder un fallo, así
+  // que se avisa en el registro para que no pase desapercibido.
+  const resultado = await respuesta.json().catch(() => null);
+  if (Array.isArray(resultado) && resultado.length > 0) {
+    console.warn(
+      `Supabase Storage no borró ${resultado.length} objeto(s) que se le pidió quitar:`,
+      resultado
     );
   }
 }

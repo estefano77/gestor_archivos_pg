@@ -81,6 +81,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // El tipo se fija una vez y se usa en dos sitios: la fila de la base de
+    // datos y la cabecera de la subida al almacén. Deben coincidir, porque un
+    // bucket con `allowed_mime_types` rechaza la subida si no lo hacen.
+    const mimeType = file.type || "application/octet-stream";
+
     const category = getFileCategory(file.type, file.name);
 
     const allowedCategories: FileCategory[] = [
@@ -140,7 +145,7 @@ export async function POST(req: NextRequest) {
       userId: user.userId,
       folderId,
       originalName: file.name,
-      mimeType: file.type || "application/octet-stream",
+      mimeType,
       category,
       size: file.size,
       storagePath,
@@ -171,7 +176,7 @@ export async function POST(req: NextRequest) {
     // La fila ya existe y la cuota está reservada. Ahora se sube el binario; si
     // falla, se deshace la reserva para no dejar un archivo que no se puede abrir.
     try {
-      await guardarArchivo(storagePath, buffer);
+      await guardarArchivo(storagePath, buffer, mimeType);
     } catch (error) {
       await archivos.revertir(user.userId, reserva.file.id);
       console.error("Error al guardar el binario:", error);

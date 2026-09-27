@@ -25,7 +25,13 @@
  */
 
 export interface Almacen {
-  guardar(storagePath: string, datos: Buffer): Promise<void>;
+  /**
+   * `mimeType` es el tipo real del archivo. No es opcional en la práctica: un
+   * bucket de Supabase con `allowed_mime_types` rechaza la subida si no
+   * coincide, y mandarlo siempre como octet-stream hace que la application's
+   * propia lista de formatos admitidos no sirva para nada.
+   */
+  guardar(storagePath: string, datos: Buffer, mimeType: string): Promise<void>;
   leer(storagePath: string): Promise<Buffer>;
   borrar(rutas: string[]): Promise<void>;
 }
@@ -57,8 +63,12 @@ async function elegir(): Promise<Almacen> {
   );
 }
 
-export async function guardarArchivo(ruta: string, datos: Buffer): Promise<void> {
-  return (await elegir()).guardar(ruta, datos);
+export async function guardarArchivo(
+  ruta: string,
+  datos: Buffer,
+  mimeType: string
+): Promise<void> {
+  return (await elegir()).guardar(ruta, datos, mimeType);
 }
 
 export async function leerArchivo(ruta: string): Promise<Buffer> {

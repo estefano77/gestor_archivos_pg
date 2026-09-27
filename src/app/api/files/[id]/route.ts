@@ -34,10 +34,17 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     try {
       await borrarArchivos([borrado.storage_path]);
     } catch (error) {
-      // La fila ya no existe, así que el usuario sí ha borrado su archivo. Un
-      // binario que se queda atrás solo ocupa espacio; avisar de un error aquí
-      // lo haría dudar de algo que ya se ha hecho.
-      console.error("Error al borrar el binario del almacén:", error);
+      // La fila ya no existe, así que el usuario sí ha borrado su archivo y no
+      // hay nada que rehacer: devolverle un error por un problema de
+      // almacenamiento que él no puede resolver solo le confundiría. Pero el
+      // binario se queda en el bucket ocupando espacio, así que se avisa con
+      // claridad en el registro en lugar de esconderse.
+      console.error(
+        "ATENCIÓN: el archivo se borró de la base de datos pero su binario sigue" +
+          " en el almacén. Hay que quitarlo a mano para no acumular basura:",
+        borrado.storage_path,
+        error
+      );
     }
 
     return NextResponse.json({

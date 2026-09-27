@@ -95,6 +95,116 @@ function readDatabaseUrl() {
   );
 }
 
+/** Lee del `.env.local` lo que este script necesita del almacén. */
+function leerConfigAlmacen() {
+  if (process.env.STORAGE_BACKEND) {
+    return {
+      backend: process.env.STORAGE_BACKEND,
+      url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      clave: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      bucket: process.env.SUPABASE_STORAGE_BUCKET ?? "archivos",
+    };
+  }
+  let texto = "";
+  try {
+    texto = readFileSync(".env.local", "utf8");
+  } catch {
+    // Se informa abajo con un mensaje más claro.
+  }
+  const buscar = (nombre) => {
+    const m = texto.match(new RegExp(`^${nombre}=(.*)$`, "m"));
+    return m ? m[1].trim() : undefined;
+  };
+  return {
+    backend: buscar("STORAGE_BACKEND") ?? "local",
+    url: buscar("NEXT_PUBLIC_SUPABASE_URL"),
+    clave: buscar("SUPABASE_SERVICE_ROLE_KEY"),
+    bucket: buscar("SUPABASE_STORAGE_BUCKET") ?? "archivos",
+  };
+}
+
+const ALMACEN = leerConfigAlmacen();
+
+/** Las claves de Storage rechazan los guiones bajos en la ruta: van como %5F. */
+function codificarRuta(storagePath) {
+  return storagePath
+    .split("/")
+    .map((s) => encodeURIComponent(s).replace(/_/g, "%5F"))
+    .join("/");
+}
+
+/**
+ * Sube el binario al backend que esté configurado.
+ *
+ * Antes esto solo escribía en disco y, con `STORAGE_BACKEND=supabase`, se
+ * quedaba sin hacer nada: la fila se creaba apuntando a una ruta que no existía
+ * en el bucket y la siembra quedaba inservible.
+ */
+async function subirBinario(storagePath, datos, mimeType) {
+  if (ALMACEN.backend === "local") {
+    const destino = join(STORAGE_DIR, storagePath);
+    mkdirSync(dirname(destino), { recursive: true });
+    writeFileSync(destino, datos);
+    return;
+  }
+
+  if (!ALMACEN.url || !ALMACEN.clave) {
+    throw new Error(
+      "STORAGE_BACKEND=supabase necesita NEXT_PUBLIC_SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+
+  const respuesta = await fetch(
+    `${ALMACEN.url.replace(/\/$/, "")}/storage/v1/object/${ALMACEN.bucket}/${codificarRuta(storagePath)}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ALMACEN.clave}`,
+        "Content-Type": mimeType,
+        "x-upsert": "true",
+      },
+      body: new Uint8Array(datos),
+    }
+  );
+
+  if (!respuesta.ok) {
+    const detalle = await respuesta.text().catch(() => "");
+    throw new Error(
+      `Supabase Storage devolvió ${respuesta.status} al subir "${storagePath}". ${detalle}`.trim()
+    );
+  }
+}
+
+/** Borra binarios del backend configurado. */
+async function borrarBinarios(storagePaths) {
+  if (storagePaths.length === 0) return;
+
+  if (ALMACEN.backend === "local") {
+    borrarDeDisco(storagePaths);
+    return;
+  }
+
+  const respuesta = await fetch(
+    `${ALMACEN.url.replace(/\/$/, "")}/storage/v1/object/${ALMACEN.bucket}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${ALMACEN.clave}`,
+        "Content-Type": "application/json",
+      },
+      // El cuerpo debe ser un objeto con `prefixes`; un array suelto devuelve 400.
+      body: JSON.stringify({ prefixes: storagePaths.map(codificarRuta) }),
+    }
+  );
+
+  if (!respuesta.ok && respuesta.status !== 404) {
+    const detalle = await respuesta.text().catch(() => "");
+    throw new Error(
+      `Supabase Storage devolvió ${respuesta.status} al borrar. ${detalle}`.trim()
+    );
+  }
+}
+
 /**
  * Guarda el binario en disco con la misma estructura de rutas que usa la
  * aplicación, para que al abrir la aplicación en local se vea el archivo.
@@ -157,14 +267,7 @@ async function cleanSeedData(db) {
   await db.query("DELETE FROM folders WHERE user_id = $1", [userId]);
   const usuarios = await db.query("DELETE FROM users WHERE id = $1", [userId]);
 
-  if ((process.env.STORAGE_BACKEND ?? "local") === "local") {
-    borrarDeDisco(binarios.rows.map((r) => r.storage_path));
-  } else {
-    console.log(
-      "AVISO: STORAGE_BACKEND=supabase. Los binarios de la siembra no se borran desde aquí;"
-    );
-    console.log("       bórralos desde el panel de Supabase si repetiste la siembra.");
-  }
+  await borrarBinarios(binarios.rows.map((r) => r.storage_path));
 
   console.log(`Borrado de la siembra "${SEED_EMAIL}":`);
   console.log(`  archivos .......... ${binarios.rowCount}`);
@@ -229,9 +332,7 @@ async function seed(db) {
     const fileId = randomUUID();
     const storagePath = `${userId}/${fileId}-${item.file}`;
 
-    if ((process.env.STORAGE_BACKEND ?? "local") === "local") {
-      guardarEnDisco(storagePath, datos);
-    }
+    await subirBinario(storagePath, datos, item.mimeType);
 
     await db.query(
       `INSERT INTO files

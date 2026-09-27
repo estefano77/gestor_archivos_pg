@@ -33,7 +33,13 @@ function rutaSegura(storagePath: string): string {
   return completa;
 }
 
-export async function guardar(storagePath: string, datos: Buffer): Promise<void> {
+// El mimeType se acepta por cumplir la interfaz, pero en disco es irrelevante:
+// no hay nada que interpretar, solo bytes.
+export async function guardar(
+  storagePath: string,
+  datos: Buffer,
+  _mimeType: string
+): Promise<void> {
   const destino = rutaSegura(storagePath);
   await fs.mkdir(path.dirname(destino), { recursive: true });
   await fs.writeFile(destino, datos);
