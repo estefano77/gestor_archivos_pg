@@ -27,7 +27,7 @@ Aplicación web para subir, organizar y previsualizar documentos con **PostgreSQ
   300 %); ficha de datos para Word, Excel y PowerPoint.
 - **Tema claro y oscuro** que sigue al del sistema y recuerda tu elección.
 - **Manual de usuario integrado** en `/help`, con capturas reales de la
-  aplicación ybuscador lateral con seguimiento del desplazamiento.
+  aplicación e índice lateral que sigue el desplazamiento.
 - **Las cuentas de Google no tienen contraseña** y no se pueden enlazar dos veces
   la misma cuenta de Google.
 
@@ -335,7 +335,7 @@ gestor_archivos_pg/
 │   │       └── folders/
 │   │           ├── route.ts          Listado y creación
 │   │           └── [id]/route.ts     Renombrar y eliminar en cascada
-│   ├── components/                    20 componentes de interfaz
+│   ├── components/                    15 componentes de interfaz
 │   ├── lib/
 │   │   ├── db/                        ◀ CAMBIADO: la capa de datos
 │   │   │   ├── pool.ts                Conexión y transacciones
@@ -442,7 +442,7 @@ habrían borrado la una con la otra.
 - Google OAuth: el mismo flujo y el mismo `jose`.
 - Los modos de acceso: la misma variable y el mismo comportamiento.
 - **El contrato de la API.** Mismas claves JSON, mismos tipos y mismos códigos de
-  estado. Por eso los 20 componentes y las 3 páginas se reutilizan sin cambios.
+  estado. Por eso los 15 componentes y las 3 páginas se reutilizan sin cambios.
 - El manual de usuario, salvo los textos que nombraban el motor de datos.
 
 ---
@@ -468,4 +468,6 @@ el manual. Al añadir una, hay que subir también el número de las siguientes.
 
 ## Licencia
 
-MIT. © 2026 Estéfano Castillo.
+Apache License 2.0. © 2026 Estéfano Castillo. El texto completo está en el
+fichero [`LICENSE`](LICENSE), y es la misma licencia que usa el proyecto
+`gestor_archivos`.
