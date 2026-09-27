@@ -1,4 +1,4 @@
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from "pg";
 
 // Se reexportan para que el resto de la capa de datos no tenga que importar de
 // `pg` directamente, dejando claro que el único punto de entrada es este módulo.
@@ -42,6 +42,32 @@ const cache: PgCache = global.pgCache ?? { pool: null };
 global.pgCache = cache;
 
 /**
+ * Decide el TLS según el host de la cadena de conexión.
+ *
+ * Reglas, por orden:
+ *
+ * 1. Si `PGSSLMODE` está puesto, manda sobre todo. Es la vía para un caso raro
+ *    (un túnel, un servidor propio con su certificado).
+ * 2. `localhost` o `127.0.0.1` sin TLS: no se pide. El PostgreSQL de desarrollo
+ *    no lo trae y exigirlo rompe la conexión con un error que no explica nada.
+ * 3. Cualquier otro host, Supabase incluido: TLS sí, sin validar el
+ *    certificado. Supabase lo sirve con una cadena que el sistema no siempre
+ *    reconoce, y sin esta opción falla con "self-signed certificate in chain".
+ */
+function opcionesSsl(url: string): PoolConfig["ssl"] {
+  const modo = process.env.PGSSLMODE?.toLowerCase();
+  if (modo === "disable") return false;
+  if (modo === "require" || modo === "verify-ca" || modo === "verify-full") {
+    return { rejectUnauthorized: true };
+  }
+
+  const esLocal = /@(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url);
+  if (esLocal) return false;
+
+  return { rejectUnauthorized: false };
+}
+
+/**
  * Obtiene el pool, creándolo la primera vez. Lanza si falta la configuración,
  * en lugar de inventarse una conexión: arrancar sin base de datos y fallar en
  * la primera petición esconde el problema.
@@ -62,11 +88,13 @@ export function getPool(): Pool {
     max: 1,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
-    // Supabase sirve el TLS con un certificado que no está en la cadena de
-    // confianza del sistema en algunos entornos; sin esto la conexión falla con
-    // "self-signed certificate in certificate chain". Se puede desactivar con
-    // PGSSLMODE=disable solo en local.
-    ...(process.env.PGSSLMODE === "disable" ? { ssl: false } : { ssl: { rejectUnauthorized: false } }),
+    // Cómo negociar el TLS depende de a dónde apunte la cadena, y antes de esto
+    // había que acordarse de cambiar PGSSLMODE al alternar entre el PostgreSQL
+    // local y Supabase. Olvidarse producía un error engañoso: con
+    // `PGSSLMODE=require` contra el servidor local, que no usa TLS, el driver
+    // responde "The server does not support SSL connections" y parece un
+    // problema de la base de datos cuando la culpa es del modo.
+    ssl: opcionesSsl(DATABASE_URL),
   });
 
   // Sin esto, un fallo de red en segundo plano tumba el proceso en vez de
