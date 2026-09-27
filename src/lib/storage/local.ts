@@ -22,11 +22,18 @@ const RAIZ = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), ".storag
  * La ruta la compone la aplicación, no el usuario, pero un nombre de archivo con
  * `..` o una barra bastaría para escribir fuera del directorio. Se normaliza y
  * se comprueba que siga dentro antes de tocar el disco.
+ *
+ * Los comentarios `turbopackIgnore` de abajo son el opt-out que indica la propia
+ * documentación de Turbopack, y hacen falta aunque este backend no se use en
+ * producción. Sin ellos, el análisis estático ve rutas calculadas en tiempo de
+ * ejecución y avisa de que tendría que rastrear el proyecto entero, con lo que
+ * el despliegue arrastraría los ficheros fuente y la carpeta `public` (que aquí
+ * no es baldaya: son 18 capturas del manual).
  */
 function rutaSegura(storagePath: string): string {
   const limpia = path.normalize(storagePath).replace(/^([/\\])+/, "");
-  const completa = path.resolve(RAIZ, limpia);
-  const raizResuelta = path.resolve(RAIZ);
+  const completa = path.resolve(/* turbopackIgnore: true */ RAIZ, limpia);
+  const raizResuelta = path.resolve(/* turbopackIgnore: true */ RAIZ);
   if (!completa.startsWith(raizResuelta + path.sep) && completa !== raizResuelta) {
     throw new Error("Ruta de almacenamiento no permitida");
   }
@@ -41,19 +48,21 @@ export async function guardar(
   _mimeType: string
 ): Promise<void> {
   const destino = rutaSegura(storagePath);
-  await fs.mkdir(path.dirname(destino), { recursive: true });
-  await fs.writeFile(destino, datos);
+  await fs.mkdir(/* turbopackIgnore: true */ path.dirname(destino), {
+    recursive: true,
+  });
+  await fs.writeFile(/* turbopackIgnore: true */ destino, datos);
 }
 
 export async function leer(storagePath: string): Promise<Buffer> {
-  return fs.readFile(rutaSegura(storagePath));
+  return fs.readFile(/* turbopackIgnore: true */ rutaSegura(storagePath));
 }
 
 export async function borrar(rutas: string[]): Promise<void> {
   await Promise.all(
     rutas.map(async (ruta) => {
       try {
-        await fs.unlink(rutaSegura(ruta));
+        await fs.unlink(/* turbopackIgnore: true */ rutaSegura(ruta));
       } catch (error) {
         // Solo se tolera que el archivo no exista; cualquier otro error se
         // propaga para que se vea.
